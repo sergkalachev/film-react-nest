@@ -20,6 +20,8 @@ import { OrderModule } from './order/order.module';
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
       serveRoot: '/content/afisha',
+      exclude: ['/api*'],
+      serveStaticOptions: { index: 'images/bg1s.jpg' },
     }),
     FilmsModule,
     OrderModule,
