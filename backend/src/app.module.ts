@@ -17,12 +17,23 @@ import { OrderModule } from './order/order.module';
     //MongoDB подключение
     MongooseModule.forRoot(process.env.DATABASE_URL),
     //Раздача статических файлов
-    ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'public'),
-      serveRoot: '/content/afisha',
-      exclude: ['/api*'],
-      serveStaticOptions: { index: 'images/bg1s.jpg' },
-    }),
+    ServeStaticModule.forRoot(
+      // 1) Сначала ищем файл в /public/images  → /content/afisha/<file>
+      {
+        rootPath: join(__dirname, '..', 'public', 'images'),
+        serveRoot: '/content/afisha',
+        exclude: ['/api*'],
+        // если файла нет в images — пропускаем дальше (к следующему static)
+        serveStaticOptions: { fallthrough: true },
+      },
+      // 2) Остальное обслуживаем из /public (без index.html)
+      {
+        rootPath: join(__dirname, '..', 'public'),
+        serveRoot: '/content/afisha',
+        exclude: ['/api*'],
+        serveStaticOptions: { index: false },
+      },
+    ),
     FilmsModule,
     OrderModule,
     // @todo: Добавьте раздачу статических файлов из public
