@@ -10,8 +10,8 @@ import { Film } from './film.entity';
 
 @Entity({ name: 'schedules' })
 export class Schedule {
-  @PrimaryGeneratedColumn({ type: 'integer', name: 'id' })
-  id: number;
+  @PrimaryGeneratedColumn('uuid', { name: 'id' })
+  id: string;
 
   @Index()
   @Column({ type: 'uuid', name: 'filmId' })
@@ -24,8 +24,8 @@ export class Schedule {
   @Column({ type: 'timestamptz', name: 'daytime' })
   daytime!: Date;
 
-  @Column({ type: 'varchar', length: 10, name: 'hall' })
-  hall!: string;
+  @Column({ type: 'integer', name: 'hall' })
+  hall!: number;
 
   @Column({ type: 'integer', name: 'rows' })
   rows!: number;
@@ -36,7 +36,6 @@ export class Schedule {
   @Column({ type: 'integer', name: 'price' })
   price!: number;
 
-  // ключи занятых мест вида '1:2'
   @Column({
     type: 'text',
     array: true,

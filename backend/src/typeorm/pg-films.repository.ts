@@ -12,13 +12,53 @@ export class PgFilmsRepository {
     private readonly schedules: Repository<Schedule>,
   ) {}
 
+  // Нормализация столбца занятых мест из разных представлений (text[], text(JSON))
+  private toStringArray(raw: unknown): string[] {
+    if (Array.isArray(raw)) return raw.map(String);
+    if (typeof raw === 'string' && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
   private mapRawFilm(row: any) {
+    let tags: string[] = [];
+    const rawTags = row.f_tags;
+    if (Array.isArray(rawTags)) {
+      tags = rawTags;
+    } else if (typeof rawTags === 'string' && rawTags.trim()) {
+      try {
+        const parsed = JSON.parse(rawTags);
+        if (Array.isArray(parsed)) tags = parsed;
+      } catch {
+        tags = [];
+      }
+    }
+
     return {
       id: String(row.f_id),
       title: row.title ?? undefined,
       description: row.f_description ?? undefined,
       image: row.f_image ?? undefined,
       cover: row.f_cover ?? undefined,
+      director: row.f_director ?? '',
+      rating: row.f_rating != null ? Number(row.f_rating) : 0,
+      tags,
+      about: row.f_about ?? '',
+    };
+  }
+
+  private buildFilmScheduleResponse(film: any, items: any[]) {
+    return {
+      ...film,
+      items,
+      total: items.length,
+      length: items.length,
     };
   }
 
@@ -31,15 +71,37 @@ export class PgFilmsRepository {
     return (await this.getFilmById(id)) as any;
   }
 
-  async findSchedule(filmId: string): Promise<any[]> {
-    return this.getSchedulesByFilm(filmId);
+  async findSchedule(filmId: string) {
+    const film = await this.getFilmById(filmId);
+    if (!film) {
+      return this.buildFilmScheduleResponse({ id: filmId }, []);
+    }
+    const items = await this.getSchedulesByFilm(filmId);
+    return this.buildFilmScheduleResponse(film, items);
   }
 
-  async getScheduleByFilm(filmId: string): Promise<any[]> {
-    return (await this.getSchedulesByFilm(filmId)) as any[];
+  async schedule(filmId: string) {
+    return this.findSchedule(filmId);
   }
 
-  // Методы работы с БД
+  async getFilmAndSession(filmId: string, sessionId?: string) {
+    const film = await this.getFilmById(filmId);
+    if (!film) {
+      return { film: null, session: null };
+    }
+
+    const items = await this.getSchedulesByFilm(filmId);
+
+    if (!sessionId) {
+      return { film, session: null };
+    }
+
+    const one =
+      items.find((i: any) => String(i.id) === String(sessionId)) ?? null;
+    return { film, session: one };
+  }
+
+  // ----- Методы работы с БД -----
   async getFilms(): Promise<any[]> {
     const rows = await this.films
       .createQueryBuilder('f')
@@ -48,6 +110,10 @@ export class PgFilmsRepository {
       .addSelect('f.image', 'f_image')
       .addSelect('f.cover', 'f_cover')
       .addSelect('f.title', 'title')
+      .addSelect('f.director', 'f_director')
+      .addSelect('f.rating', 'f_rating')
+      .addSelect('f.tags', 'f_tags')
+      .addSelect('f.about', 'f_about')
       .orderBy('f.id', 'ASC')
       .getRawMany();
 
@@ -64,6 +130,10 @@ export class PgFilmsRepository {
       .addSelect('f.image', 'f_image')
       .addSelect('f.cover', 'f_cover')
       .addSelect('f.title', 'title')
+      .addSelect('f.director', 'f_director')
+      .addSelect('f.rating', 'f_rating')
+      .addSelect('f.tags', 'f_tags')
+      .addSelect('f.about', 'f_about')
       .where('f.id = :id', { id: pk })
       .getRawOne();
 
@@ -71,8 +141,34 @@ export class PgFilmsRepository {
   }
 
   async getSchedulesByFilm(filmId: string): Promise<Schedule[]> {
-    return this.schedules.find({
-      where: { filmId } as any,
+    const rows = await this.schedules.query(
+      `SELECT "id",
+              "filmId" AS film_id,
+              "daytime",
+              "hall",
+              "rows",
+              "seats",
+              "price",
+              "taken"
+         FROM "schedules"
+        WHERE "filmId" = $1
+        ORDER BY "daytime" ASC`,
+      [filmId],
+    );
+
+    return rows.map((r: any) => {
+      const taken = this.toStringArray(r.taken);
+      return {
+        id: String(r.id),
+        filmId: String(r.film_id),
+        daytime: r.daytime instanceof Date ? r.daytime : new Date(r.daytime),
+        hall: typeof r.hall === 'number' ? r.hall : Number(r.hall),
+        rows: r.rows != null ? Number(r.rows) : undefined,
+        seats: r.seats != null ? Number(r.seats) : undefined,
+        price: r.price != null ? Number(r.price) : undefined,
+        taken,
+        takenSeats: taken,
+      } as any;
     });
   }
 
@@ -81,7 +177,6 @@ export class PgFilmsRepository {
     sessionId: string,
     seatKeys: string[],
   ): Promise<{ updated: boolean; conflicts: string[] }> {
-    // найти расписание по фильму и сеансу
     const schedule = await this.schedules.findOne({
       where: { id: sessionId as any, filmId: filmId as any } as any,
     });
@@ -92,21 +187,16 @@ export class PgFilmsRepository {
     const currentTaken: string[] =
       (schedule as any).taken ?? (schedule as any).takenSeats ?? [];
 
-    // определить конфликты
     const conflicts = seatKeys.filter((k) => currentTaken.includes(k));
-    if (conflicts.length > 0) {
+    if (conflicts.length) {
       return { updated: false, conflicts };
     }
 
     const newTaken = Array.from(new Set([...currentTaken, ...seatKeys]));
 
-    // подготовить payload под фактическое имя поля в entity/таблице
     const payload: Partial<Schedule> = {} as any;
-    if ('taken' in schedule) {
-      (payload as any).taken = newTaken;
-    } else {
-      (payload as any).takenSeats = newTaken;
-    }
+    if ('taken' in schedule) (payload as any).taken = newTaken;
+    else (payload as any).takenSeats = newTaken;
 
     await this.schedules.update(
       { id: sessionId as any } as any,

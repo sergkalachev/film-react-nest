@@ -3,13 +3,13 @@ import { Schedule } from './schedule.entity';
 
 @Entity({ name: 'films' })
 export class Film {
-  @PrimaryGeneratedColumn({ type: 'integer', name: 'id' })
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column({ type: 'varchar', length: 255, name: 'title', nullable: true })
   title?: string;
 
-  @Column({ type: 'text', name: 'description', nullable: true })
+  @Column({ type: 'varchar', name: 'description', nullable: true })
   description?: string;
 
   @Column({ type: 'varchar', length: 255, name: 'image', nullable: true })
@@ -19,5 +19,5 @@ export class Film {
   cover?: string;
 
   @OneToMany(() => Schedule, (s) => s.film)
-  schedules!: Schedule[];
+  schedules!: Schedule;
 }

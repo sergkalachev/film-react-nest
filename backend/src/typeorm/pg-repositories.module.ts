@@ -1,17 +1,14 @@
-import { Global, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { PgOrmModule } from './pg-orm.module';
 import { PgFilmsRepository } from './pg-films.repository';
 
-import { FilmsRepository } from '../repository/films.repository';
-
-@Global()
 @Module({
   imports: [PgOrmModule],
   providers: [
-    ...(process.env.DATABASE_DRIVER === 'postgres'
-      ? [{ provide: FilmsRepository, useClass: PgFilmsRepository }]
-      : []),
+    PgFilmsRepository,
+    // единый DI-токен, на который ссылаются сервисы
+    { provide: 'FILMS_REPOSITORY', useExisting: PgFilmsRepository },
   ],
-  exports: [FilmsRepository],
+  exports: ['FILMS_REPOSITORY'],
 })
 export class PgRepositoriesModule {}
