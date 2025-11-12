@@ -29,6 +29,7 @@ export class FilmDto {
 export class FilmsListResponseDto {
   @IsNumber() total!: number;
   @IsArray() items!: FilmDto[];
+  length: number;
 }
 
 // Shedule
@@ -46,4 +47,5 @@ export class SheduleItemDto {
 export class FilmScheduleResponseDto {
   @IsNumber() total!: number;
   @IsArray() items!: SheduleItemDto[];
+  length: number;
 }

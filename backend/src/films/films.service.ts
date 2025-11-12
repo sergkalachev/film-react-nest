@@ -6,11 +6,21 @@ import { FilmsRepository } from '../repository/films.repository';
 export class FilmsService {
   constructor(private readonly repo: FilmsRepository) {}
 
-  list(): Promise<FilmsListResponseDto> {
-    return this.repo.findAll();
+  async list(): Promise<FilmsListResponseDto> {
+    const raw: any = await this.repo.findAll();
+    const items = Array.isArray(raw) ? raw : raw?.items ?? [];
+    const total = Array.isArray(raw)
+      ? items.length
+      : raw?.total ?? items.length;
+    return { total, items, length: items.length } as any;
   }
 
-  schedule(filmId: string): Promise<FilmScheduleResponseDto> {
-    return this.repo.findSchedule(filmId);
+  async schedule(filmId: string): Promise<FilmScheduleResponseDto> {
+    const raw: any = await this.repo.findSchedule(filmId);
+    const items = Array.isArray(raw) ? raw : raw?.items ?? [];
+    const total = Array.isArray(raw)
+      ? items.length
+      : raw?.total ?? items.length;
+    return { total, items, length: items.length } as any;
   }
 }

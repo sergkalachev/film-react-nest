@@ -29,7 +29,7 @@ export class FilmsRepository {
       image: d.image,
       cover: d.cover,
     }));
-    return { total: items.length, items };
+    return { total: items.length, items, length: items.length };
   }
 
   async findSchedule(filmId: string): Promise<FilmScheduleResponseDto> {
@@ -45,7 +45,7 @@ export class FilmsRepository {
       price: s.price,
       taken: s.taken ?? [],
     }));
-    return { total: items.length, items };
+    return { total: items.length, items, length: items.length };
   }
   /** Получить фильм и конкретный сеанс (кинозал) */
   async getFilmAndSession(filmId: string, sessionId: string) {

@@ -7,6 +7,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { FilmsModule } from './films/films.module';
 import { OrderModule } from './order/order.module';
+import { PgRepositoriesModule } from './typeorm/pg-repositories.module';
 
 @Module({
   imports: [
@@ -15,8 +16,12 @@ import { OrderModule } from './order/order.module';
       cache: true,
     }),
     //MongoDB подключение
-    MongooseModule.forRoot(process.env.DATABASE_URL),
+    //MongooseModule.forRoot(process.env.DATABASE_URL),
     //Раздача статических файлов
+    //MongoDB подключение (только если выбран mongodb)
+    ...(process.env.DATABASE_DRIVER === 'mongodb'
+      ? [MongooseModule.forRoot(process.env.DATABASE_URL)]
+      : []),
     ServeStaticModule.forRoot(
       // 1) Сначала ищем файл в /public/images  → /content/afisha/<file>
       {
@@ -36,6 +41,7 @@ import { OrderModule } from './order/order.module';
     ),
     FilmsModule,
     OrderModule,
+    PgRepositoriesModule,
     // @todo: Добавьте раздачу статических файлов из public
   ],
   controllers: [],

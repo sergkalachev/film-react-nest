@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { FilmsRepository } from '../repository/films.repository';
 import {
   CreateOrderDto,
@@ -44,7 +48,7 @@ export class OrderService {
     // также проверим конфликты с уже занятыми (до любых обновлений)
     for (const [key, tickets] of groups) {
       const [filmId, sessionId] = key.split(':');
-      const { session } = await this.repo.getFilmAndSession(filmId, sessionId);
+      const { session } = await this.getFilmAndSessionCompat(filmId, sessionId);
 
       // диапазоны
       for (const t of tickets) {
@@ -112,5 +116,55 @@ export class OrderService {
     if (typeof t.row !== 'number' || typeof t.seat !== 'number') {
       throw new BadRequestException('row and seat must be numbers');
     }
+  }
+
+  private async getFilmAndSessionCompat(
+    filmId: string,
+    sessionId: string,
+  ): Promise<{ film: any; session: any }> {
+    const r: any = this.repo as any;
+
+    // Если у репозитория есть нужный метод — используем его
+    if (typeof r.getFilmAndSession === 'function') {
+      const res = await r.getFilmAndSession(filmId, sessionId);
+      if (!res?.film) throw new NotFoundException(`Film ${filmId} not found`);
+      if (!res?.session)
+        throw new NotFoundException(
+          `Session ${sessionId} not found for film ${filmId}`,
+        );
+      return res;
+    }
+
+    // Иначе — собираем вручную из доступных методов
+    let scheduleRes: any;
+    if (typeof r.findSchedule === 'function') {
+      scheduleRes = await r.findSchedule(filmId);
+    } else if (typeof r.getScheduleByFilm === 'function') {
+      const items = await r.getScheduleByFilm(filmId);
+      scheduleRes = { items };
+    } else {
+      scheduleRes = { items: [] };
+    }
+
+    const items: any[] = Array.isArray(scheduleRes)
+      ? scheduleRes
+      : scheduleRes?.items ?? [];
+    const session = items.find((s: any) => String(s.id) === String(sessionId));
+    if (!session)
+      throw new NotFoundException(
+        `Session ${sessionId} not found for film ${filmId}`,
+      );
+
+    let film: any = null;
+    if (typeof r.findById === 'function') {
+      film = await r.findById(filmId);
+    } else if (typeof r.findAll === 'function') {
+      const list = await r.findAll();
+      const films = Array.isArray(list) ? list : list?.items ?? [];
+      film = films.find((f: any) => String(f.id) === String(filmId)) ?? null;
+    }
+    if (!film) throw new NotFoundException(`Film ${filmId} not found`);
+
+    return { film, session };
   }
 }
