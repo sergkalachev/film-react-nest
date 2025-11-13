@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Film } from '../entities/film.entity';
 import { Schedule } from '../entities/schedule.entity';
+import { join } from 'path';
 
 @Module({
   imports: [
@@ -15,11 +16,9 @@ import { Schedule } from '../entities/schedule.entity';
         let port: number | undefined;
         let database: string | undefined;
 
-        // читаем логин/пароль из переменных .env тестов
         let username = cfg.get<string>('DATABASE_USERNAME') || '';
         let password = cfg.get<string>('DATABASE_PASSWORD') || '';
 
-        // парсим URL, чтобы достать host/port/db и, если есть, логин/пароль
         try {
           if (dbUrl) {
             const u = new URL(dbUrl);
@@ -30,7 +29,7 @@ import { Schedule } from '../entities/schedule.entity';
             if (u.password) password = decodeURIComponent(u.password);
           }
         } catch {
-          // игнорируем, если строка безвалидная — пусть останутся дефолты/переменные
+          // если DATABASE_URL кривой — используем дефолты/остальные переменные
         }
 
         return {
@@ -43,7 +42,9 @@ import { Schedule } from '../entities/schedule.entity';
           autoLoadEntities: true,
           synchronize: false,
           logging: ['error', 'warn'],
-          retryAttempts: 50,
+          migrationsRun: true,
+          migrations: [join(__dirname, '..', 'migrations', '*.{ts,js}')],
+          retryAttempts: 40,
           retryDelay: 3000,
           keepConnectionAlive: true,
         };
