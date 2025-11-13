@@ -27,6 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 18.x }
+
       - name: Get testing lib
         run: set -eu && git clone --depth 1 "$REP_TESTS" "$DIR_TESTS"
 
@@ -34,17 +35,28 @@ jobs:
         run: |
           set -euxo pipefail
           cp "$DIR_TESTS/data/.env.example" backend/.env
-          sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/films|' backend/.env
+          # Переключаемся на порт 5433
+          sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/films|' backend/.env
 
-      - name: Start Postgres (docker) and wait ready
+      # Явно поднимем Postgres на 5433 и подмонтируем init-скрипт
+      - name: Start Postgres (docker run on 5433) and wait
         run: |
           set -euxo pipefail
-          cd "$DIR_TESTS/data"
-          docker compose up -d
+          docker rm -f postgres_container || true
+          docker run -d --name postgres_container \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=films \
+            -p 127.0.0.1:5433:5432 \
+            -v "$DIR_TESTS/data/prac.init.sql":/docker-entrypoint-initdb.d/prac.init.sql \
+            postgres:15
+          # ждём готовность Postgres внутри контейнера и порт на хосте
           for i in {1..60}; do
             docker exec postgres_container pg_isready -U postgres -d films >/dev/null 2>&1 && break || sleep 2
           done
-          docker exec postgres_container psql -U postgres -d films -c '\dt' || true
+          npx -y wait-port@1.0.4 -t 120000 5433
+          docker ps -a
+          docker logs --tail 200 postgres_container || true
 
       - name: Build backend
         run: |
