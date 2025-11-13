@@ -1,4 +1,4 @@
-name: Tests 14 sprint
+name: Tests 15 sprint
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     tags:
       - '**'
 env:
-  DIR_TESTS: /tmp/tests-back-to-the-film
-  REP_TESTS: https://github.com/Yandex-Practicum/tests-back-to-the-film.git
+  DIR_TESTS: /tmp/tests-migrate-db
+  REP_TESTS: https://github.com/Yandex-Practicum/tests-migrate-db.git
 jobs:
   test_backend:
     runs-on: ubuntu-latest
