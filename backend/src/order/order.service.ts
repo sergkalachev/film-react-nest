@@ -130,11 +130,13 @@ export class OrderService {
       }
 
       for (const t of group) {
+        const normalizedDaytime = (t.daytime ?? '').trim() || 'null';
+
         items.push({
           id: randomUUID(),
           film: t.film,
           session: t.session,
-          daytime: t.daytime,
+          daytime: normalizedDaytime,
           row: t.row,
           seat: t.seat,
           price: t.price,
