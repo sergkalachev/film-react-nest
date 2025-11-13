@@ -177,32 +177,87 @@ export class PgFilmsRepository {
     sessionId: string,
     seatKeys: string[],
   ): Promise<{ updated: boolean; conflicts: string[] }> {
-    const schedule = await this.schedules.findOne({
-      where: { id: sessionId as any, filmId: filmId as any } as any,
-    });
-    if (!schedule) {
-      return { updated: false, conflicts: seatKeys.slice() };
-    }
+    const unique = Array.from(new Set(seatKeys));
 
-    const currentTaken: string[] =
-      (schedule as any).taken ?? (schedule as any).takenSeats ?? [];
+    // 1) Пытаемся атомарно обновить текстовый массив taken (тип text[])
+    //    Если есть пересечение с unique — UPDATE не выполнится.
+    try {
+      // Попытка обновления без конфликтов
+      const updated = await this.schedules.query(
+        `
+        UPDATE "schedules"
+           SET "taken" = (
+             SELECT ARRAY(
+               SELECT DISTINCT e
+               FROM unnest("taken" || $3::text[]) AS e
+             )
+           )
+         WHERE "id" = $1
+           AND "filmId" = $2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM unnest("taken") AS t
+             WHERE t = ANY ($3::text[])
+           )
+        RETURNING "taken";
+        `,
+        [sessionId, filmId, unique],
+      );
 
-    const conflicts = seatKeys.filter((k) => currentTaken.includes(k));
-    if (conflicts.length) {
+      if (Array.isArray(updated) && updated.length > 0) {
+        // Успешно зарезервировали
+        return { updated: true, conflicts: [] };
+      }
+
+      // Обновление не прошло — либо конфликты, либо нет такого сеанса
+      const rows = await this.schedules.query(
+        `
+        SELECT ARRAY(
+                 SELECT t
+                 FROM unnest("taken") AS t
+                 WHERE t = ANY ($3::text[])
+               ) AS conflicts
+          FROM "schedules"
+         WHERE "id" = $1 AND "filmId" = $2
+        `,
+        [sessionId, filmId, unique],
+      );
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        // сеанс не найден
+        return { updated: false, conflicts: unique };
+      }
+
+      const conflicts: string[] = rows[0]?.conflicts ?? [];
       return { updated: false, conflicts };
+    } catch {
+      // 2) Фоллбек на «неатомарную» логику (на случай, если колонка taken вдруг не text[])
+      const schedule = await this.schedules.findOne({
+        where: { id: sessionId as any, filmId: filmId as any } as any,
+      });
+      if (!schedule) {
+        return { updated: false, conflicts: unique.slice() };
+      }
+
+      const currentTaken: string[] =
+        (schedule as any).taken ?? (schedule as any).takenSeats ?? [];
+
+      const conflicts = unique.filter((k) => currentTaken.includes(k));
+      if (conflicts.length) {
+        return { updated: false, conflicts };
+      }
+
+      const newTaken = Array.from(new Set([...currentTaken, ...unique]));
+      const payload: Partial<Schedule> = {} as any;
+      if ('taken' in schedule) (payload as any).taken = newTaken;
+      else (payload as any).takenSeats = newTaken;
+
+      await this.schedules.update(
+        { id: sessionId as any } as any,
+        payload as any,
+      );
+
+      return { updated: true, conflicts: [] };
     }
-
-    const newTaken = Array.from(new Set([...currentTaken, ...seatKeys]));
-
-    const payload: Partial<Schedule> = {} as any;
-    if ('taken' in schedule) (payload as any).taken = newTaken;
-    else (payload as any).takenSeats = newTaken;
-
-    await this.schedules.update(
-      { id: sessionId as any } as any,
-      payload as any,
-    );
-
-    return { updated: true, conflicts: [] };
   }
 }
