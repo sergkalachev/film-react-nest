@@ -3,6 +3,49 @@ import { Repository } from 'typeorm';
 import { Film } from '../entities/film.entity';
 import { Schedule } from '../entities/schedule.entity';
 import { Injectable } from '@nestjs/common';
+import { FilmDto, SheduleItemDto } from '../films/dto/films.dto';
+
+interface RawFilmRow {
+  f_id: string | number;
+  f_description: string | null;
+  f_image: string | null;
+  f_cover: string | null;
+  title: string | null;
+  f_director: string | null;
+  f_rating: number | null;
+  f_tags: string | string[] | null;
+  f_about: string | null;
+}
+
+interface RawFirstScheduleRow {
+  filmId: string;
+  id: string;
+  price: number | null;
+  daytime: string | Date;
+}
+
+interface RawScheduleRow {
+  id: string;
+  film_id: string;
+  daytime: string | Date;
+  hall: number | string;
+  rows: number | string | null;
+  seats: number | string | null;
+  price: number | string | null;
+  taken: string | string[] | null;
+}
+
+interface ConflictRow {
+  conflicts: string[];
+}
+interface UpdatedTakenRow {
+  taken: string[] | null;
+}
+interface UpdatedTakenSeatsRow {
+  takenSeats: string[] | null;
+}
+
+type SchedulePreview = { id: string; price: number };
 
 @Injectable()
 export class PgFilmsRepository {
@@ -12,8 +55,7 @@ export class PgFilmsRepository {
     private readonly schedules: Repository<Schedule>,
   ) {}
 
-  // Нормализация столбца занятых мест из разных представлений (text[], text(JSON))
-  private toStringArray(raw: unknown): string[] {
+  private toStringArray(raw: string[] | string | null | undefined): string[] {
     if (Array.isArray(raw)) return raw.map(String);
     if (typeof raw === 'string' && raw.trim()) {
       try {
@@ -26,17 +68,16 @@ export class PgFilmsRepository {
     return [];
   }
 
-  private mapRawFilm(row: any) {
+  private mapRawFilm(row: RawFilmRow): FilmDto {
+    const tagSrc = row.f_tags;
     let tags: string[] = [];
-    const rawTags = row.f_tags;
-    if (Array.isArray(rawTags)) {
-      tags = rawTags;
-    } else if (typeof rawTags === 'string' && rawTags.trim()) {
+    if (Array.isArray(tagSrc)) tags = tagSrc.map(String);
+    else if (typeof tagSrc === 'string' && tagSrc.trim()) {
       try {
-        const parsed = JSON.parse(rawTags);
-        if (Array.isArray(parsed)) tags = parsed;
+        const parsed = JSON.parse(tagSrc);
+        if (Array.isArray(parsed)) tags = parsed.map(String);
       } catch {
-        tags = [];
+        /* noop */
       }
     }
 
@@ -53,56 +94,82 @@ export class PgFilmsRepository {
     };
   }
 
-  private buildFilmScheduleResponse(film: any, items: any[]) {
+  async findAll(): Promise<(FilmDto & { schedule: SchedulePreview[] })[]> {
+    const films = await this.getFilms();
+    const filmIds = films.map((f) => f.id);
+    if (filmIds.length === 0) {
+      return films.map((f) => ({ ...f, schedule: [] }));
+    }
+
+    const first = await this.schedules.query<RawFirstScheduleRow[]>(
+      `
+      SELECT DISTINCT ON ("filmId")
+             "filmId", "id", "price", "daytime"
+        FROM "schedules"
+       WHERE "filmId" = ANY($1)
+       ORDER BY "filmId", "daytime" ASC
+      `,
+      [filmIds],
+    );
+
+    const map = new Map<string, SchedulePreview>();
+    for (const r of first) {
+      map.set(String(r.filmId), {
+        id: String(r.id),
+        price: r.price != null ? Number(r.price) : 350,
+      });
+    }
+
+    return films.map((f) => ({
+      ...f,
+      schedule: map.has(f.id) ? [map.get(f.id)!] : [],
+    }));
+  }
+
+  async findById(id: string): Promise<FilmDto | null> {
+    return this.getFilmById(id);
+  }
+
+  async findSchedule(filmId: string): Promise<
+    (FilmDto & { schedule?: SchedulePreview[] }) & {
+      items: SheduleItemDto[];
+      total: number;
+      length: number;
+    }
+  > {
+    const film = await this.getFilmById(filmId);
+    const items = await this.getSchedulesByFilm(filmId);
+    const preview: SchedulePreview[] =
+      items.length > 0
+        ? [{ id: items[0].id, price: items[0].price ?? 350 }]
+        : [];
+
+    const base = film ?? ({ id: filmId } as FilmDto);
     return {
-      ...film,
+      ...base,
+      schedule: preview,
       items,
       total: items.length,
       length: items.length,
     };
   }
 
-  async findAll(): Promise<any[]> {
-    const rows = await this.getFilms();
-    return rows as any[];
-  }
-
-  async findById(id: string): Promise<any | null> {
-    return (await this.getFilmById(id)) as any;
-  }
-
-  async findSchedule(filmId: string) {
-    const film = await this.getFilmById(filmId);
-    if (!film) {
-      return this.buildFilmScheduleResponse({ id: filmId }, []);
-    }
-    const items = await this.getSchedulesByFilm(filmId);
-    return this.buildFilmScheduleResponse(film, items);
-  }
-
   async schedule(filmId: string) {
     return this.findSchedule(filmId);
   }
 
-  async getFilmAndSession(filmId: string, sessionId?: string) {
+  async getFilmAndSession(
+    filmId: string,
+    sessionId?: string,
+  ): Promise<{ film: FilmDto | null; session: SheduleItemDto | null }> {
     const film = await this.getFilmById(filmId);
-    if (!film) {
-      return { film: null, session: null };
-    }
-
+    if (!film) return { film: null, session: null };
+    if (!sessionId) return { film, session: null };
     const items = await this.getSchedulesByFilm(filmId);
-
-    if (!sessionId) {
-      return { film, session: null };
-    }
-
-    const one =
-      items.find((i: any) => String(i.id) === String(sessionId)) ?? null;
-    return { film, session: one };
+    return { film, session: items.find((i) => i.id === sessionId) ?? null };
   }
 
-  // ----- Методы работы с БД -----
-  async getFilms(): Promise<any[]> {
+  async getFilms(): Promise<FilmDto[]> {
     const rows = await this.films
       .createQueryBuilder('f')
       .select('f.id', 'f_id')
@@ -115,45 +182,13 @@ export class PgFilmsRepository {
       .addSelect('f.tags', 'f_tags')
       .addSelect('f.about', 'f_about')
       .orderBy('f.id', 'ASC')
-      .getRawMany();
+      .getRawMany<RawFilmRow>();
 
-    const films = rows.map((r) => this.mapRawFilm(r));
-    const filmIds = films.map((f) => f.id);
-
-    if (filmIds.length === 0) return films.map((f) => ({ ...f, schedule: [] }));
-
-    // берём первый (по времени) сеанс на каждый фильм
-    const firstRows = await this.schedules.query(
-      `
-      SELECT DISTINCT ON ("filmId")
-             "filmId", "id", "price", "daytime"
-        FROM "schedules"
-       WHERE "filmId" = ANY($1)
-       ORDER BY "filmId", "daytime" ASC
-    `,
-      [filmIds],
-    );
-
-    const firstMap = new Map<string, { id: string; price: number }>();
-    for (const r of firstRows) {
-      firstMap.set(String(r.filmId), {
-        id: String(r.id),
-        price: r.price != null ? Number(r.price) : 350,
-      });
-    }
-
-    return films.map((f) => {
-      const s = firstMap.get(f.id);
-      return {
-        ...f,
-        schedule: s ? [{ id: s.id, price: s.price }] : [], // важна именно пара {id, price}
-      };
-    });
+    return rows.map((r) => this.mapRawFilm(r));
   }
 
-  async getFilmById(id: string): Promise<any | null> {
-    const pk: any = /^\d+$/.test(id) ? Number(id) : id;
-
+  async getFilmById(id: string): Promise<FilmDto | null> {
+    const pk: string | number = /^\d+$/.test(id) ? Number(id) : id;
     const row = await this.films
       .createQueryBuilder('f')
       .select('f.id', 'f_id')
@@ -166,40 +201,41 @@ export class PgFilmsRepository {
       .addSelect('f.tags', 'f_tags')
       .addSelect('f.about', 'f_about')
       .where('f.id = :id', { id: pk })
-      .getRawOne();
+      .getRawOne<RawFilmRow>();
 
     return row ? this.mapRawFilm(row) : null;
   }
 
-  async getSchedulesByFilm(filmId: string): Promise<Schedule[]> {
-    const rows = await this.schedules.query(
-      `SELECT "id",
-              "filmId" AS film_id,
-              "daytime",
-              "hall",
-              "rows",
-              "seats",
-              "price",
-              "taken"
-         FROM "schedules"
-        WHERE "filmId" = $1
-        ORDER BY "daytime" ASC`,
+  async getSchedulesByFilm(filmId: string): Promise<SheduleItemDto[]> {
+    const rows = await this.schedules.query<RawScheduleRow[]>(
+      `
+      SELECT "id",
+             "filmId" AS film_id,
+             "daytime",
+             "hall",
+             "rows",
+             "seats",
+             "price",
+             "taken"
+        FROM "schedules"
+       WHERE "filmId" = $1
+       ORDER BY "daytime" ASC
+      `,
       [filmId],
     );
 
-    return rows.map((r: any) => {
+    return rows.map((r): SheduleItemDto => {
       const taken = this.toStringArray(r.taken);
+      const dt = r.daytime instanceof Date ? r.daytime : new Date(r.daytime);
       return {
         id: String(r.id),
-        filmId: String(r.film_id),
-        daytime: r.daytime instanceof Date ? r.daytime : new Date(r.daytime),
+        daytime: dt.toISOString(),
         hall: typeof r.hall === 'number' ? r.hall : Number(r.hall),
-        rows: r.rows != null ? Number(r.rows) : undefined,
-        seats: r.seats != null ? Number(r.seats) : undefined,
-        price: r.price != null ? Number(r.price) : undefined,
+        rows: r.rows != null ? Number(r.rows) : 0,
+        seats: r.seats != null ? Number(r.seats) : 0,
+        price: r.price != null ? Number(r.price) : 0,
         taken,
-        takenSeats: taken,
-      } as any;
+      };
     });
   }
 
@@ -210,24 +246,21 @@ export class PgFilmsRepository {
   ): Promise<{ updated: boolean; conflicts: string[] }> {
     const unique = Array.from(new Set(seatKeys));
 
-    // 1) Пытаемся атомарно обновить текстовый массив taken (тип text[])
-    //    Если есть пересечение с unique — UPDATE не выполнится.
     try {
-      // Попытка обновления без конфликтов
-      const updated = await this.schedules.query(
+      const updated = await this.schedules.query<UpdatedTakenRow[]>(
         `
         UPDATE "schedules"
            SET "taken" = (
              SELECT ARRAY(
                SELECT DISTINCT e
-               FROM unnest("taken" || $3::text[]) AS e
+               FROM unnest(COALESCE("taken", '{}'::text[]) || $3::text[]) AS e
              )
            )
          WHERE "id" = $1
            AND "filmId" = $2
            AND NOT EXISTS (
              SELECT 1
-             FROM unnest("taken") AS t
+             FROM unnest(COALESCE("taken", '{}'::text[])) AS t
              WHERE t = ANY ($3::text[])
            )
         RETURNING "taken";
@@ -235,17 +268,13 @@ export class PgFilmsRepository {
         [sessionId, filmId, unique],
       );
 
-      if (Array.isArray(updated) && updated.length > 0) {
-        // Успешно зарезервировали
-        return { updated: true, conflicts: [] };
-      }
+      if (updated.length > 0) return { updated: true, conflicts: [] };
 
-      // Обновление не прошло — либо конфликты, либо нет такого сеанса
-      const rows = await this.schedules.query(
+      const rows = await this.schedules.query<ConflictRow[]>(
         `
         SELECT ARRAY(
                  SELECT t
-                 FROM unnest("taken") AS t
+                 FROM unnest(COALESCE("taken", '{}'::text[])) AS t
                  WHERE t = ANY ($3::text[])
                ) AS conflicts
           FROM "schedules"
@@ -254,41 +283,57 @@ export class PgFilmsRepository {
         [sessionId, filmId, unique],
       );
 
-      if (!Array.isArray(rows) || rows.length === 0) {
-        // сеанс не найден
-        return { updated: false, conflicts: unique };
-      }
-
-      const conflicts: string[] = rows[0]?.conflicts ?? [];
-      return { updated: false, conflicts };
+      if (rows.length === 0) return { updated: false, conflicts: unique };
+      const conflicts = rows[0].conflicts ?? [];
+      if (conflicts.length > 0) return { updated: false, conflicts };
     } catch {
-      // 2) Фоллбек на «неатомарную» логику (на случай, если колонка taken вдруг не text[])
-      const schedule = await this.schedules.findOne({
-        where: { id: sessionId as any, filmId: filmId as any } as any,
-      });
-      if (!schedule) {
-        return { updated: false, conflicts: unique.slice() };
-      }
+      /* попробуем takenSeats */
+    }
 
-      const currentTaken: string[] =
-        (schedule as any).taken ?? (schedule as any).takenSeats ?? [];
-
-      const conflicts = unique.filter((k) => currentTaken.includes(k));
-      if (conflicts.length) {
-        return { updated: false, conflicts };
-      }
-
-      const newTaken = Array.from(new Set([...currentTaken, ...unique]));
-      const payload: Partial<Schedule> = {} as any;
-      if ('taken' in schedule) (payload as any).taken = newTaken;
-      else (payload as any).takenSeats = newTaken;
-
-      await this.schedules.update(
-        { id: sessionId as any } as any,
-        payload as any,
+    try {
+      const updated2 = await this.schedules.query<UpdatedTakenSeatsRow[]>(
+        `
+        UPDATE "schedules"
+           SET "takenSeats" = (
+             SELECT ARRAY(
+               SELECT DISTINCT e
+               FROM unnest(COALESCE("takenSeats", '{}'::text[]) || $3::text[]) AS e
+             )
+           )
+         WHERE "id" = $1
+           AND "filmId" = $2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM unnest(COALESCE("takenSeats", '{}'::text[])) AS t
+             WHERE t = ANY ($3::text[])
+           )
+        RETURNING "takenSeats";
+        `,
+        [sessionId, filmId, unique],
       );
 
-      return { updated: true, conflicts: [] };
+      if (updated2.length > 0) return { updated: true, conflicts: [] };
+
+      const rows2 = await this.schedules.query<ConflictRow[]>(
+        `
+        SELECT ARRAY(
+                 SELECT t
+                 FROM unnest(COALESCE("takenSeats", '{}'::text[])) AS t
+                 WHERE t = ANY ($3::text[])
+               ) AS conflicts
+          FROM "schedules"
+         WHERE "id" = $1 AND "filmId" = $2
+        `,
+        [sessionId, filmId, unique],
+      );
+
+      if (rows2.length === 0) return { updated: false, conflicts: unique };
+      const conflicts2 = rows2[0].conflicts ?? [];
+      return conflicts2.length > 0
+        ? { updated: false, conflicts: conflicts2 }
+        : { updated: false, conflicts: [] };
+    } catch {
+      return { updated: false, conflicts: unique };
     }
   }
 }
