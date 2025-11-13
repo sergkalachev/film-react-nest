@@ -3,12 +3,14 @@
 import {
   IsArray,
   IsEmail,
-  IsNumber,
+  IsInt,
+  IsOptional,
   IsString,
   IsUUID,
+  Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 /** Ticket из OpenAPI */
 export class TicketDto {
@@ -18,17 +20,27 @@ export class TicketDto {
   @IsUUID()
   session!: string; // 95ab4a20-9555-4a06-bfac-184b8c53fe70
 
-  @IsString() // format: date-time
-  daytime!: string; // '2023-05-29T10:30:00.001Z'
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) =>
+    value === 'null' || value === null ? undefined : String(value),
+  )
+  daytime?: string;
 
-  @IsNumber()
-  row!: number; // 2
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  row!: number;
 
-  @IsNumber()
-  seat!: number; // 5
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  seat!: number;
 
-  @IsNumber()
-  price!: number; // 350
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  price!: number;
 }
 
 /** Тело запроса POST /order */
@@ -45,10 +57,10 @@ export class CreateOrderDto {
   tickets!: TicketDto[];
 }
 
-/** Элемент ответа: Ticket + id */
 export class OrderConfirmItemDto {
+  @IsOptional()
   @IsUUID()
-  id!: string;
+  id?: string;
 
   @IsUUID()
   film!: string;
@@ -56,22 +68,30 @@ export class OrderConfirmItemDto {
   @IsUUID()
   session!: string;
 
+  @IsOptional()
   @IsString()
-  daytime!: string;
+  daytime?: string;
 
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   row!: number;
 
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   seat!: number;
 
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   price!: number;
 }
 
-/** Ответ POST /order */
 export class OrderConfirmResponseDto {
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   total!: number;
 
   @IsArray()
