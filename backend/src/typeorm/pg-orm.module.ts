@@ -17,6 +17,9 @@ import { Schedule } from '../entities/schedule.entity';
         autoLoadEntities: true,
         synchronize: false,
         logging: ['error', 'warn'],
+        retryAttempts: 50, // ~150 сек общей выдержки
+        retryDelay: 3000, // 3 сек между попытками
+        keepConnectionAlive: true, // не обязателен, но безопасен для dev/watch
       }),
     }),
     TypeOrmModule.forFeature([Film, Schedule]),
