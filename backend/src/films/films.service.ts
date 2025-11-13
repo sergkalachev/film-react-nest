@@ -12,7 +12,7 @@ export class FilmsService {
     const total = Array.isArray(raw)
       ? items.length
       : raw?.total ?? items.length;
-    return { total, items, length: items.length } as any;
+    return { ...(Array.isArray(raw) ? {} : (raw || {})), total, items, length: items.length } as any;
   }
 
   async schedule(filmId: string): Promise<FilmScheduleResponseDto> {
@@ -21,6 +21,6 @@ export class FilmsService {
     const total = Array.isArray(raw)
       ? items.length
       : raw?.total ?? items.length;
-    return { total, items, length: items.length } as any;
+    return { ...(Array.isArray(raw) ? {} : (raw || {})), total, items, length: items.length } as any;
   }
 }

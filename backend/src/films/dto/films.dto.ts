@@ -23,6 +23,7 @@ export class FilmDto {
   @IsString() @IsOptional() description?: string; // example: 'Документальный фильм Итана Райта исследует...'
   @IsString() @IsOptional() image?: string; // example: '/images/bg1s.jpg'
   @IsString() @IsOptional() cover?: string; // example: '/images/bg1c.jpg'
+  @IsString() schedule!: string; // film id для /films/{id}/schedule/
 }
 
 // Ответ для GET /films
@@ -36,7 +37,7 @@ export class FilmsListResponseDto {
 export class SheduleItemDto {
   @IsUUID() id!: string; // example: 95ab4a20-9555-4a06-bfac-184b8c53fe70
   @IsString() daytime!: string; // example: '2023-05-29T10:30:00.001Z'
-  @IsString() hall!: string; // example: '2'
+  @IsString() hall!: number; // example: '2'
   @IsNumber() rows!: number; // example: 5
   @IsNumber() seats!: number; // example: 10
   @IsNumber() price!: number; // example: 350

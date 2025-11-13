@@ -42,6 +42,7 @@ export class PgFilmsRepository {
 
     return {
       id: String(row.f_id),
+      schedule: String(row.f_id),
       title: row.title ?? undefined,
       description: row.f_description ?? undefined,
       image: row.f_image ?? undefined,

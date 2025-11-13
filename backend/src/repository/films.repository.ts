@@ -26,6 +26,7 @@ export class FilmsRepository {
       title: d.title,
       about: d.about,
       description: d.description,
+      schedule: d.id,
       image: d.image,
       cover: d.cover,
     }));
@@ -37,17 +38,20 @@ export class FilmsRepository {
       .findOne({ id: filmId }, { _id: 0, schedule: 1 })
       .lean();
     const items: SheduleItemDto[] = (doc?.schedule ?? []).map((s) => ({
-      id: s.id,
-      daytime: s.daytime,
-      hall: s.hall,
-      rows: s.rows,
-      seats: s.seats,
-      price: s.price,
-      taken: s.taken ?? [],
+      id: String(s.id),
+      daytime: String(s.daytime),
+      hall: Number(s.hall),
+      rows: Number(s.rows),
+      seats: Number(s.seats),
+      price: Number(s.price),
+      taken: Array.isArray(s.taken)
+        ? s.taken
+        : String(s.taken || '')
+            .split(',')
+            .filter(Boolean),
     }));
     return { total: items.length, items, length: items.length };
   }
-  /** Получить фильм и конкретный сеанс (кинозал) */
   async getFilmAndSession(filmId: string, sessionId: string) {
     const film = await this.filmModel.findOne({ id: filmId }).lean();
     if (!film) throw new NotFoundException(`Film ${filmId} not found`);
@@ -65,7 +69,6 @@ export class FilmsRepository {
    * - затем добавляем новыеtaken через $addToSet $each.
    */
   async reserveSeats(filmId: string, sessionId: string, seatKeys: string[]) {
-    // 1) повторная защита: если уже занято — сообщим
     const doc = await this.filmModel
       .findOne(
         { id: filmId, 'schedule.id': sessionId },
@@ -85,7 +88,6 @@ export class FilmsRepository {
       return { updated: false, conflicts };
     }
 
-    // 2) добавляем
     const res = await this.filmModel.updateOne(
       { id: filmId, 'schedule.id': sessionId },
       { $addToSet: { 'schedule.$.taken': { $each: seatKeys } } },

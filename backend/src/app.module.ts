@@ -20,6 +20,14 @@ const isMongo =
   imports: [
     ConfigModule.forRoot({ isGlobal: true, cache: true }),
 
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'public', 'images'),
+      serveRoot: '/content/afisha',
+      serveStaticOptions: {
+        index: 'bg1s.jpg', // чтобы GET /content/afisha/ вернул картинку
+      },
+    }),
+
     ...(isMongo
       ? [MongooseModule.forRoot(process.env.DATABASE_URL!), RepositoryModule]
       : [PgOrmModule, PgRepositoriesModule]),
