@@ -23,7 +23,7 @@ export class FilmDto {
   @IsString() @IsOptional() description?: string; // example: 'Документальный фильм Итана Райта исследует...'
   @IsString() @IsOptional() image?: string; // example: '/images/bg1s.jpg'
   @IsString() @IsOptional() cover?: string; // example: '/images/bg1c.jpg'
-  @IsString() schedule!: string; // film id для /films/{id}/schedule/
+  @IsArray() @IsOptional() schedule?: string[]; // film id для /films/{id}/schedule/
 }
 
 // Ответ для GET /films

@@ -42,7 +42,6 @@ export class PgFilmsRepository {
 
     return {
       id: String(row.f_id),
-      schedule: String(row.f_id),
       title: row.title ?? undefined,
       description: row.f_description ?? undefined,
       image: row.f_image ?? undefined,
@@ -51,6 +50,7 @@ export class PgFilmsRepository {
       rating: row.f_rating != null ? Number(row.f_rating) : 0,
       tags,
       about: row.f_about ?? '',
+      schedule: [String(row.f_id)],
     };
   }
 

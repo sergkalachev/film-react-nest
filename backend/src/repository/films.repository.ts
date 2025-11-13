@@ -26,9 +26,9 @@ export class FilmsRepository {
       title: d.title,
       about: d.about,
       description: d.description,
-      schedule: d.id,
       image: d.image,
       cover: d.cover,
+      schedule: [String(d.id)],
     }));
     return { total: items.length, items, length: items.length };
   }
