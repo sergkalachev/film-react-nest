@@ -14,6 +14,7 @@ export class FilmIdParamDto {
 
 export class FilmScheduleLinkDto {
   @IsUUID() id!: string;
+  @IsNumber() price!: number;
 }
 
 // Film

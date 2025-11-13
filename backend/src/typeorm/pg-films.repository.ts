@@ -50,7 +50,7 @@ export class PgFilmsRepository {
       rating: row.f_rating != null ? Number(row.f_rating) : 0,
       tags,
       about: row.f_about ?? '',
-      schedule: [{ id: String(row.f_id) }],
+      schedule: [{ id: String(row.f_id), price: 350 }],
     };
   }
 

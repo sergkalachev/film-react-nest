@@ -28,7 +28,12 @@ export class FilmsRepository {
       description: d.description,
       image: d.image,
       cover: d.cover,
-      schedule: [{ id: String(d.id) }],
+      schedule: [
+        {
+          id: String(d.id),
+          price: Number(d?.schedule?.[0]?.price ?? 350),
+        },
+      ],
     }));
     return { total: items.length, items, length: items.length };
   }
