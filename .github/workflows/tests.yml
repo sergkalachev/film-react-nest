@@ -36,7 +36,7 @@ jobs:
           cp "$DIR_TESTS/data/.env.example" backend/.env
           sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@localhost:5432/films|' backend/.env
 
-      - name: Start Postgres (from tests repo) and wait ready
+      - name: Start Postgres (docker) and wait ready
         run: |
           set -euxo pipefail
           cd "$DIR_TESTS/data"
@@ -46,14 +46,31 @@ jobs:
           done
           docker exec postgres_container psql -U postgres -d films -c '\dt' || true
 
-      - name: Build & start backend
+      - name: Build backend
         run: |
           set -euxo pipefail
           npm ci --prefix backend
           npm run --prefix backend build
-          npm run --prefix backend start:dev &
+
+      - name: Start backend (prod) in background and log
+        run: |
+          set -euxo pipefail
+          cd backend
+          nohup node dist/main.js > ../backend.log 2>&1 &
+          echo $! > ../backend.pid
+          sleep 3
+          tail -n +1 ../backend.log || true
+
+      - name: Wait for backend port (dump logs on failure)
+        run: |
+          set -euxo pipefail
+          for i in {1..60}; do
+            nc -z 127.0.0.1 3000 && echo "Backend up!" && exit 0
+            sleep 2
+          done
+          echo "::error::Backend didn't start, dumping last 200 lines of backend.log"
+          tail -n 200 backend.log || true
+          exit 1
 
       - name: Run endpoint tests
-        run: |
-          npx -y wait-port@1.0.4 -t 120000 3000
-          bash "$DIR_TESTS/bin/endpoints.sh"
+        run: bash "$DIR_TESTS/bin/endpoints.sh"
