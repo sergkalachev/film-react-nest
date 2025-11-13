@@ -30,7 +30,7 @@ export class FilmsRepository {
       cover: d.cover,
       schedule: [
         {
-          id: String(d.id),
+          id: String(d?.schedule?.[0]?.id ?? d.id),
           price: Number(d?.schedule?.[0]?.price ?? 350),
         },
       ],

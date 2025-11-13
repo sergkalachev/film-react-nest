@@ -50,7 +50,6 @@ export class PgFilmsRepository {
       rating: row.f_rating != null ? Number(row.f_rating) : 0,
       tags,
       about: row.f_about ?? '',
-      schedule: [{ id: String(row.f_id), price: 350 }],
     };
   }
 
@@ -118,7 +117,38 @@ export class PgFilmsRepository {
       .orderBy('f.id', 'ASC')
       .getRawMany();
 
-    return rows.map((r) => this.mapRawFilm(r));
+    const films = rows.map((r) => this.mapRawFilm(r));
+    const filmIds = films.map((f) => f.id);
+
+    if (filmIds.length === 0) return films.map((f) => ({ ...f, schedule: [] }));
+
+    // берём первый (по времени) сеанс на каждый фильм
+    const firstRows = await this.schedules.query(
+      `
+      SELECT DISTINCT ON ("filmId")
+             "filmId", "id", "price", "daytime"
+        FROM "schedules"
+       WHERE "filmId" = ANY($1)
+       ORDER BY "filmId", "daytime" ASC
+    `,
+      [filmIds],
+    );
+
+    const firstMap = new Map<string, { id: string; price: number }>();
+    for (const r of firstRows) {
+      firstMap.set(String(r.filmId), {
+        id: String(r.id),
+        price: r.price != null ? Number(r.price) : 350,
+      });
+    }
+
+    return films.map((f) => {
+      const s = firstMap.get(f.id);
+      return {
+        ...f,
+        schedule: s ? [{ id: s.id, price: s.price }] : [], // важна именно пара {id, price}
+      };
+    });
   }
 
   async getFilmById(id: string): Promise<any | null> {
