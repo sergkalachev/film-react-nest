@@ -17,9 +17,8 @@ async function bootstrap() {
   app.setGlobalPrefix('api/afisha');
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  const host = process.env.HOST || '0.0.0.0';
-  await app.listen(port, host);
+  await app.listen(port, '0.0.0.0');
 
-  console.log(`Server is running on http://${host}:${port}/api/afisha`);
+  console.log(`Server is running on http://localhost:${port}/api/afisha`);
 }
 bootstrap();
