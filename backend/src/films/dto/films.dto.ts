@@ -12,6 +12,10 @@ export class FilmIdParamDto {
   @IsUUID() id!: string;
 }
 
+export class FilmScheduleLinkDto {
+  @IsUUID() id!: string;
+}
+
 // Film
 export class FilmDto {
   @IsUUID() id!: string; // example: d290f1ee-6c54-4b01-90e6-d701748f0851
@@ -23,7 +27,7 @@ export class FilmDto {
   @IsString() @IsOptional() description?: string; // example: 'Документальный фильм Итана Райта исследует...'
   @IsString() @IsOptional() image?: string; // example: '/images/bg1s.jpg'
   @IsString() @IsOptional() cover?: string; // example: '/images/bg1c.jpg'
-  @IsArray() @IsOptional() schedule?: string[]; // film id для /films/{id}/schedule/
+  @IsArray() @IsOptional() schedule?: FilmScheduleLinkDto[];
 }
 
 // Ответ для GET /films
