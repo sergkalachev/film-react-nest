@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euxo pipefail
           cp "$DIR_TESTS/data/.env.example" backend/.env
-          sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@localhost:5432/films|' backend/.env
+          sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/films|' backend/.env
 
       - name: Start Postgres (docker) and wait ready
         run: |
