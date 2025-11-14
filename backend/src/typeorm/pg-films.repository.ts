@@ -1,20 +1,20 @@
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Film } from '../entities/film.entity';
 import { Schedule } from '../entities/schedule.entity';
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { FilmDto, SheduleItemDto } from '../films/dto/films.dto';
 
 interface RawFilmRow {
   f_id: string | number;
-  f_description: string | null;
-  f_image: string | null;
-  f_cover: string | null;
-  title: string | null;
-  f_director: string | null;
-  f_rating: number | null;
-  f_tags: string | string[] | null;
-  f_about: string | null;
+  title?: string | null;
+  f_description?: string | null;
+  f_image?: string | null;
+  f_cover?: string | null;
+  f_director?: string | null;
+  f_rating?: number | null;
+  f_tags?: string | string[] | null;
+  f_about?: string | null;
 }
 
 interface RawFirstScheduleRow {
@@ -26,13 +26,13 @@ interface RawFirstScheduleRow {
 
 interface RawScheduleRow {
   id: string;
-  film_id: string;
-  daytime: string | Date;
-  hall: number | string;
-  rows: number | string | null;
-  seats: number | string | null;
-  price: number | string | null;
-  taken: string | string[] | null;
+  film_id?: string;
+  daytime?: string | Date;
+  hall?: number | string;
+  rows?: number | string | null;
+  seats?: number | string | null;
+  price?: number | string | null;
+  taken?: string | string[] | null;
 }
 
 interface ConflictRow {
@@ -48,12 +48,39 @@ interface UpdatedTakenSeatsRow {
 type SchedulePreview = { id: string; price: number };
 
 @Injectable()
-export class PgFilmsRepository {
+export class PgFilmsRepository implements OnModuleInit {
   constructor(
     @InjectRepository(Film) private readonly films: Repository<Film>,
     @InjectRepository(Schedule)
     private readonly schedules: Repository<Schedule>,
   ) {}
+
+  /** Наборы реально существующих колонок в БД (заполняются при старте) */
+  private filmCols = new Set<string>();
+  private schedCols = new Set<string>();
+
+  async onModuleInit(): Promise<void> {
+    // Снимем "инвентаризацию" колонок в public.films и public.schedules
+    const filmRows = await this.films.query<{ column_name: string }[]>(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'films'
+      `,
+    );
+    this.filmCols = new Set(filmRows.map((r) => r.column_name));
+
+    const schedRows = await this.schedules.query<{ column_name: string }[]>(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'schedules'
+      `,
+    );
+    this.schedCols = new Set(schedRows.map((r) => r.column_name));
+  }
+
+  // ---------- helpers ----------
 
   private toStringArray(raw: string[] | string | null | undefined): string[] {
     if (Array.isArray(raw)) return raw.map(String);
@@ -66,6 +93,23 @@ export class PgFilmsRepository {
       }
     }
     return [];
+  }
+
+  /** Добавляем в qb только те колонки фильмов, что реально есть в БД */
+  private applyFilmColumns(qb: SelectQueryBuilder<Film>) {
+    qb.select('f.id', 'f_id');
+
+    if (this.filmCols.has('title')) qb.addSelect('f.title', 'title');
+    if (this.filmCols.has('description'))
+      qb.addSelect('f.description', 'f_description');
+    if (this.filmCols.has('image')) qb.addSelect('f.image', 'f_image');
+    if (this.filmCols.has('cover')) qb.addSelect('f.cover', 'f_cover');
+    if (this.filmCols.has('director')) qb.addSelect('f.director', 'f_director');
+    if (this.filmCols.has('rating')) qb.addSelect('f.rating', 'f_rating');
+    if (this.filmCols.has('tags')) qb.addSelect('f.tags', 'f_tags');
+    if (this.filmCols.has('about')) qb.addSelect('f.about', 'f_about');
+
+    return qb;
   }
 
   private mapRawFilm(row: RawFilmRow): FilmDto {
@@ -87,12 +131,19 @@ export class PgFilmsRepository {
       description: row.f_description ?? undefined,
       image: row.f_image ?? undefined,
       cover: row.f_cover ?? undefined,
-      director: row.f_director ?? '',
-      rating: row.f_rating != null ? Number(row.f_rating) : 0,
+      director: typeof row.f_director === 'string' ? row.f_director : '',
+      rating:
+        typeof row.f_rating === 'number'
+          ? row.f_rating
+          : row.f_rating != null
+            ? Number(row.f_rating)
+            : 0,
       tags,
       about: row.f_about ?? '',
     };
   }
+
+  // ---------- public API (контракт с сервисами) ----------
 
   async findAll(): Promise<(FilmDto & { schedule: SchedulePreview[] })[]> {
     const films = await this.getFilms();
@@ -169,18 +220,10 @@ export class PgFilmsRepository {
     return { film, session: items.find((i) => i.id === sessionId) ?? null };
   }
 
+  // ---------- low-level ----------
+
   async getFilms(): Promise<FilmDto[]> {
-    const rows = await this.films
-      .createQueryBuilder('f')
-      .select('f.id', 'f_id')
-      .addSelect('f.description', 'f_description')
-      .addSelect('f.image', 'f_image')
-      .addSelect('f.cover', 'f_cover')
-      .addSelect('f.title', 'title')
-      .addSelect('f.director', 'f_director')
-      .addSelect('f.rating', 'f_rating')
-      .addSelect('f.tags', 'f_tags')
-      .addSelect('f.about', 'f_about')
+    const rows = await this.applyFilmColumns(this.films.createQueryBuilder('f'))
       .orderBy('f.id', 'ASC')
       .getRawMany<RawFilmRow>();
 
@@ -189,17 +232,7 @@ export class PgFilmsRepository {
 
   async getFilmById(id: string): Promise<FilmDto | null> {
     const pk: string | number = /^\d+$/.test(id) ? Number(id) : id;
-    const row = await this.films
-      .createQueryBuilder('f')
-      .select('f.id', 'f_id')
-      .addSelect('f.description', 'f_description')
-      .addSelect('f.image', 'f_image')
-      .addSelect('f.cover', 'f_cover')
-      .addSelect('f.title', 'title')
-      .addSelect('f.director', 'f_director')
-      .addSelect('f.rating', 'f_rating')
-      .addSelect('f.tags', 'f_tags')
-      .addSelect('f.about', 'f_about')
+    const row = await this.applyFilmColumns(this.films.createQueryBuilder('f'))
       .where('f.id = :id', { id: pk })
       .getRawOne<RawFilmRow>();
 
@@ -207,33 +240,63 @@ export class PgFilmsRepository {
   }
 
   async getSchedulesByFilm(filmId: string): Promise<SheduleItemDto[]> {
-    const rows = await this.schedules.query<RawScheduleRow[]>(
-      `
-      SELECT "id",
-             "filmId" AS film_id,
-             "daytime",
-             "hall",
-             "rows",
-             "seats",
-             "price",
-             "taken"
+    // Составим SELECT динамически — берём только существующие колонки
+    const selectParts: string[] = ['"id"', '"filmId" AS film_id'];
+
+    // daytime предпочтителен, но на всякий
+    if (this.schedCols.has('daytime')) selectParts.push('"daytime"');
+    if (this.schedCols.has('hall')) selectParts.push('"hall"');
+    if (this.schedCols.has('rows')) selectParts.push('"rows"');
+    if (this.schedCols.has('seats')) selectParts.push('"seats"');
+    if (this.schedCols.has('price')) selectParts.push('"price"');
+
+    // Чтобы маппер был единообразным, если нет taken, но есть takenSeats — алиасим в taken
+    if (this.schedCols.has('taken')) {
+      selectParts.push('"taken"');
+    } else if (this.schedCols.has('takenSeats')) {
+      selectParts.push('"takenSeats" AS taken');
+    }
+
+    const orderBy = this.schedCols.has('daytime')
+      ? '"daytime" ASC'
+      : '"id" ASC';
+
+    const sql = `
+      SELECT ${selectParts.join(',\n             ')}
         FROM "schedules"
        WHERE "filmId" = $1
-       ORDER BY "daytime" ASC
-      `,
-      [filmId],
-    );
+       ORDER BY ${orderBy}
+    `;
+
+    const rows = await this.schedules.query<RawScheduleRow[]>(sql, [filmId]);
 
     return rows.map((r): SheduleItemDto => {
-      const taken = this.toStringArray(r.taken);
-      const dt = r.daytime instanceof Date ? r.daytime : new Date(r.daytime);
+      const taken = this.toStringArray(r.taken ?? null);
+      const dtRaw = r.daytime;
+      const dt =
+        typeof dtRaw === 'string'
+          ? new Date(dtRaw)
+          : dtRaw instanceof Date
+            ? dtRaw
+            : new Date(0); // безопасный дефолт
+
+      const hall =
+        typeof r.hall === 'number'
+          ? r.hall
+          : r.hall != null
+            ? Number(r.hall)
+            : 0;
+      const rowsN = r.rows != null ? Number(r.rows) : 0;
+      const seatsN = r.seats != null ? Number(r.seats) : 0;
+      const priceN = r.price != null ? Number(r.price) : 0;
+
       return {
         id: String(r.id),
         daytime: dt.toISOString(),
-        hall: typeof r.hall === 'number' ? r.hall : Number(r.hall),
-        rows: r.rows != null ? Number(r.rows) : 0,
-        seats: r.seats != null ? Number(r.seats) : 0,
-        price: r.price != null ? Number(r.price) : 0,
+        hall,
+        rows: rowsN,
+        seats: seatsN,
+        price: priceN,
         taken,
       };
     });
@@ -245,8 +308,11 @@ export class PgFilmsRepository {
     seatKeys: string[],
   ): Promise<{ updated: boolean; conflicts: string[] }> {
     const unique = Array.from(new Set(seatKeys));
+    const canTaken = this.schedCols.has('taken');
+    const canTakenSeats = this.schedCols.has('takenSeats');
 
-    try {
+    // 1) Вариант с колонкой taken
+    if (canTaken) {
       const updated = await this.schedules.query<UpdatedTakenRow[]>(
         `
         UPDATE "schedules"
@@ -267,7 +333,6 @@ export class PgFilmsRepository {
         `,
         [sessionId, filmId, unique],
       );
-
       if (updated.length > 0) return { updated: true, conflicts: [] };
 
       const rows = await this.schedules.query<ConflictRow[]>(
@@ -282,15 +347,13 @@ export class PgFilmsRepository {
         `,
         [sessionId, filmId, unique],
       );
-
       if (rows.length === 0) return { updated: false, conflicts: unique };
       const conflicts = rows[0].conflicts ?? [];
       if (conflicts.length > 0) return { updated: false, conflicts };
-    } catch {
-      /* попробуем takenSeats */
     }
 
-    try {
+    // 2) Фоллбек — колонка takenSeats
+    if (canTakenSeats) {
       const updated2 = await this.schedules.query<UpdatedTakenSeatsRow[]>(
         `
         UPDATE "schedules"
@@ -311,7 +374,6 @@ export class PgFilmsRepository {
         `,
         [sessionId, filmId, unique],
       );
-
       if (updated2.length > 0) return { updated: true, conflicts: [] };
 
       const rows2 = await this.schedules.query<ConflictRow[]>(
@@ -326,14 +388,13 @@ export class PgFilmsRepository {
         `,
         [sessionId, filmId, unique],
       );
-
       if (rows2.length === 0) return { updated: false, conflicts: unique };
       const conflicts2 = rows2[0].conflicts ?? [];
-      return conflicts2.length > 0
-        ? { updated: false, conflicts: conflicts2 }
-        : { updated: false, conflicts: [] };
-    } catch {
-      return { updated: false, conflicts: unique };
+      if (conflicts2.length > 0)
+        return { updated: false, conflicts: conflicts2 };
     }
+
+    // 3) Колонок для бронирования нет — ничего не меняем
+    return { updated: false, conflicts: unique };
   }
 }
