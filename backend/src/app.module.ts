@@ -8,25 +8,37 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { FilmsModule } from './films/films.module';
 import { OrderModule } from './order/order.module';
 
+import { RepositoryModule } from './repository/repository.module';
+import { PgOrmModule } from './typeorm/pg-orm.module';
+import { PgRepositoriesModule } from './typeorm/pg-repositories.module';
+
+const isMongo =
+  process.env.DATABASE_DRIVER?.toLowerCase() === 'mongodb' ||
+  /^mongodb(\+srv)?:\/\//.test(process.env.DATABASE_URL ?? '');
+
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      cache: true,
+    ConfigModule.forRoot({ isGlobal: true, cache: true }),
+
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'public', 'images'),
+      serveRoot: '/content/afisha',
+      serveStaticOptions: {
+        index: 'bg1s.jpg', // чтобы GET /content/afisha/ вернул картинку
+      },
     }),
-    //MongoDB подключение
-    MongooseModule.forRoot(process.env.DATABASE_URL),
-    //Раздача статических файлов
+
+    ...(isMongo
+      ? [MongooseModule.forRoot(process.env.DATABASE_URL!), RepositoryModule]
+      : [PgOrmModule, PgRepositoriesModule]),
+
     ServeStaticModule.forRoot(
-      // 1) Сначала ищем файл в /public/images  → /content/afisha/<file>
       {
         rootPath: join(__dirname, '..', 'public', 'images'),
         serveRoot: '/content/afisha',
         exclude: ['/api*'],
-        // если файла нет в images — пропускаем дальше (к следующему static)
         serveStaticOptions: { fallthrough: true },
       },
-      // 2) Остальное обслуживаем из /public (без index.html)
       {
         rootPath: join(__dirname, '..', 'public'),
         serveRoot: '/content/afisha',
@@ -34,9 +46,9 @@ import { OrderModule } from './order/order.module';
         serveStaticOptions: { index: false },
       },
     ),
+
     FilmsModule,
     OrderModule,
-    // @todo: Добавьте раздачу статических файлов из public
   ],
   controllers: [],
   providers: [configProvider],

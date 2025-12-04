@@ -1,40 +1,88 @@
-name: Tests 14 sprint
+name: Tests 15 sprint
 
 on:
   push:
-    branches:
-      - '**'
-    tags:
-      - '**'
+    branches: ['**']
+    tags: ['**']
+
 env:
-  DIR_TESTS: /tmp/tests-back-to-the-film
-  REP_TESTS: https://github.com/Yandex-Practicum/tests-back-to-the-film.git
+  DIR_TESTS: /tmp/tests-migrate-db
+  REP_TESTS: https://github.com/Yandex-Practicum/tests-migrate-db.git
+
 jobs:
   test_backend:
     runs-on: ubuntu-latest
     steps:
-    - name: Set up GitHub Actions
-      uses: actions/checkout@v4
-    - name: Use Node.js 18.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 18.x
-    - name: Get testing lib
-      run: set -eu && git clone --depth 1 $REP_TESTS $DIR_TESTS
-    - name: Run tests
-      run: bash $DIR_TESTS/bin/backend.sh
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18.x }
+      - name: Get testing lib
+        run: set -eu && git clone --depth 1 "$REP_TESTS" "$DIR_TESTS"
+      - name: Run tests
+        run: bash "$DIR_TESTS/bin/backend.sh"
+
   test_endpoints:
     runs-on: ubuntu-latest
     steps:
-    - name: Set up GitHub Actions
-      uses: actions/checkout@v4
-    - name: Use Node.js 18.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 18.x
-    - name: Get testing lib
-      run: set -eu && git clone --depth 1 $REP_TESTS $DIR_TESTS
-    - name: Start project
-      run: bash $DIR_TESTS/bin/start_project.sh
-    - name: Run tests
-      run: bash $DIR_TESTS/bin/endpoints.sh
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18.x }
+
+      - name: Get testing lib
+        run: set -eu && git clone --depth 1 "$REP_TESTS" "$DIR_TESTS"
+
+      - name: Prepare backend env
+        run: |
+          set -euxo pipefail
+          cp "$DIR_TESTS/data/.env.example" backend/.env
+          # Переключаемся на порт 5433
+          sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/films|' backend/.env
+
+      # Явно поднимем Postgres на 5433 и подмонтируем init-скрипт
+      - name: Start Postgres (docker run on 5433) and wait
+        run: |
+          set -euxo pipefail
+          docker rm -f postgres_container || true
+          docker run -d --name postgres_container \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=films \
+            -p 127.0.0.1:5433:5432 \
+            -v "$DIR_TESTS/data/prac.init.sql":/docker-entrypoint-initdb.d/prac.init.sql \
+            postgres:15
+          # ждём готовность Postgres внутри контейнера и порт на хосте
+          for i in {1..60}; do
+            docker exec postgres_container pg_isready -U postgres -d films >/dev/null 2>&1 && break || sleep 2
+          done
+          npx -y wait-port@1.0.4 -t 120000 5433
+          docker ps -a
+          docker logs --tail 200 postgres_container || true
+
+      - name: Build backend
+        run: |
+          set -euxo pipefail
+          npm ci --prefix backend
+          npm run --prefix backend build
+
+      - name: Start backend (prod) in background and log
+        run: |
+          set -euxo pipefail
+          cd backend
+          nohup node dist/main.js > ../backend.log 2>&1 &
+          echo $! > ../backend.pid
+          sleep 3
+          tail -n +1 ../backend.log || true
+
+      - name: Wait for backend port (dump logs on failure)
+        run: |
+          set -euxo pipefail
+          for i in {1..60}; do
+            nc -z 127.0.0.1 3000 && echo "Backend up!" && exit 0
+            sleep 2
+          done
+          echo "::error::Backend didn't start, dumping last 200 lines of backend.log"
+          tail -n 200 backend.log || true
+          exit 1
+
+      - name: Run endpoint tests
+        run: bash "$DIR_TESTS/bin/endpoints.sh"

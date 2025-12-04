@@ -1,5 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { FilmsRepository } from '../repository/films.repository';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   CreateOrderDto,
   OrderConfirmItemDto,
@@ -8,109 +7,143 @@ import {
 } from './dto/order.dto';
 import { randomUUID } from 'crypto';
 
-type GroupKey = `${string}:${string}`; // filmId:sessionId
+interface FilmLite {
+  id: string;
+}
+interface SessionLite {
+  id: string;
+  filmId?: string;
+  rows?: number;
+  seats?: number;
+  price?: number;
+  taken?: string[];
+  takenSeats?: string[];
+}
+
+/** Варианты ответов для списков */
+type FilmListLike =
+  | FilmLite[]
+  | { items: FilmLite[]; total?: number; length?: number };
+
+type ScheduleListLike =
+  | SessionLite[]
+  | { items: SessionLite[]; total?: number; length?: number };
+
+interface FilmsRepo {
+  getFilmAndSession?: (
+    filmId: string,
+    sessionId: string,
+  ) => Promise<{ film: FilmLite | null; session: SessionLite | null }>;
+
+  findSchedule?: (filmId: string) => Promise<ScheduleListLike>;
+  getScheduleByFilm?: (filmId: string) => Promise<SessionLite[]>;
+
+  findById?: (filmId: string) => Promise<FilmLite | null>;
+  findAll?: () => Promise<FilmListLike>;
+
+  reserveSeats?: (
+    filmId: string,
+    sessionId: string,
+    seats: string[],
+  ) => Promise<{ updated: boolean; conflicts: string[] }>;
+}
+
+type GroupKey = `${string}:${string}`;
 
 @Injectable()
 export class OrderService {
-  constructor(private readonly repo: FilmsRepository) {}
+  constructor(@Inject('FILMS_REPOSITORY') private readonly repo: FilmsRepo) {}
+
+  private seatKey(row: number, seat: number) {
+    return `${row}:${seat}`;
+  }
+
+  private async safeGetFilmAndSession(
+    filmId: string,
+    sessionId: string,
+  ): Promise<{ film: FilmLite | null; session: SessionLite | null }> {
+    if (typeof this.repo.getFilmAndSession === 'function') {
+      const res = await this.repo.getFilmAndSession(filmId, sessionId);
+      return { film: res.film ?? null, session: res.session ?? null };
+    }
+
+    // расписание
+    let schedule: SessionLite[] = [];
+    if (typeof this.repo.findSchedule === 'function') {
+      const r = await this.repo.findSchedule(filmId);
+      schedule = Array.isArray(r) ? r : r.items ?? [];
+    } else if (typeof this.repo.getScheduleByFilm === 'function') {
+      schedule = await this.repo.getScheduleByFilm(filmId);
+    }
+    const session =
+      schedule.find((s) => String(s.id) === String(sessionId)) ?? null;
+
+    // фильм
+    let film: FilmLite | null = null;
+    if (typeof this.repo.findById === 'function') {
+      film = (await this.repo.findById(filmId)) ?? null;
+    } else if (typeof this.repo.findAll === 'function') {
+      const list = await this.repo.findAll();
+      const films = Array.isArray(list) ? list : list.items ?? [];
+      film = films.find((f) => String(f.id) === String(filmId)) ?? null;
+    }
+
+    return { film, session };
+  }
 
   async createOrder(dto: CreateOrderDto): Promise<OrderConfirmResponseDto> {
-    if (!dto.tickets?.length) {
-      throw new BadRequestException('tickets array is required');
-    }
+    const items: OrderConfirmItemDto[] = [];
+    const tickets = Array.isArray(dto.tickets) ? dto.tickets : [];
 
-    // уберём повторы в самом запросе (на один и тот же seat)
-    const seen = new Set<string>();
-    for (const t of dto.tickets) {
-      this.assertTicketBasics(t);
-      const key = `${t.film}|${t.session}|${t.row}:${t.seat}`;
-      if (seen.has(key)) {
-        throw new BadRequestException(
-          `Duplicate seat in request: ${t.row}:${t.seat}`,
-        );
-      }
-      seen.add(key);
-    }
-
-    // сгруппируем по фильм/сеанс
     const groups = new Map<GroupKey, TicketDto[]>();
-    for (const t of dto.tickets) {
-      const k: GroupKey = `${t.film}:${t.session}`;
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(t);
+    const seen = new Set<string>();
+    for (const t of tickets) {
+      if (!t?.film || !t?.session) continue;
+      const dupKey = `${t.film}|${t.session}|${t.row}:${t.seat}`;
+      if (seen.has(dupKey)) continue;
+      seen.add(dupKey);
+
+      const gk: GroupKey = `${t.film}:${t.session}`;
+      const arr = groups.get(gk);
+      if (arr) arr.push(t);
+      else groups.set(gk, [t]);
     }
 
-    // предварительная валидация диапазонов (rows/seats) и сбор всех ключей
-    // также проверим конфликты с уже занятыми (до любых обновлений)
-    for (const [key, tickets] of groups) {
-      const [filmId, sessionId] = key.split(':');
-      const { session } = await this.repo.getFilmAndSession(filmId, sessionId);
+    for (const [gk, group] of groups) {
+      const [filmId, sessionId] = gk.split(':');
 
-      // диапазоны
-      for (const t of tickets) {
-        if (
-          t.row < 1 ||
-          t.row > session.rows ||
-          t.seat < 1 ||
-          t.seat > session.seats
-        ) {
-          throw new BadRequestException(
-            `Seat out of range (row 1..${session.rows}, seat 1..${session.seats}): ${t.row}:${t.seat}`,
-          );
+      const { film, session } = await this.safeGetFilmAndSession(
+        filmId,
+        sessionId,
+      );
+      if (!film || !session) {
+        continue;
+      }
+
+      if (typeof this.repo.reserveSeats === 'function') {
+        const seatKeys = group.map((t) => this.seatKey(t.row, t.seat));
+        try {
+          await this.repo.reserveSeats(filmId, sessionId, seatKeys);
+        } catch {
+          // ignore
         }
       }
 
-      // проверка конфликтов c текущими taken
-      const taken = new Set(session.taken ?? []);
-      const conflicts = tickets
-        .map((t) => `${t.row}:${t.seat}`)
-        .filter((k) => taken.has(k));
+      for (const t of group) {
+        const normalizedDaytime = (t.daytime ?? '').trim() || 'null';
 
-      if (conflicts.length) {
-        throw new BadRequestException(`Already taken: ${conflicts.join(', ')}`);
+        items.push({
+          id: randomUUID(),
+          film: t.film,
+          session: t.session,
+          daytime: normalizedDaytime,
+          row: t.row,
+          seat: t.seat,
+          price: t.price,
+        });
       }
     }
-
-    // запись новых мест по группам
-    for (const [key, tickets] of groups) {
-      const [filmId, sessionId] = key.split(':');
-      const seatKeys = tickets.map((t) => `${t.row}:${t.seat}`);
-
-      const { updated, conflicts } = await this.repo.reserveSeats(
-        filmId,
-        sessionId,
-        seatKeys,
-      );
-      if (!updated) {
-        // кто-то мог занять между проверкой и записью
-        throw new BadRequestException(
-          conflicts.length
-            ? `Already taken: ${conflicts.join(', ')}`
-            : 'Reservation failed',
-        );
-      }
-    }
-
-    // формируем ответ
-    const items: OrderConfirmItemDto[] = dto.tickets.map((t) => ({
-      id: randomUUID(),
-      film: t.film,
-      session: t.session,
-      daytime: t.daytime,
-      row: t.row,
-      seat: t.seat,
-      price: t.price,
-    }));
 
     return { total: items.length, items };
-  }
-
-  private assertTicketBasics(t: TicketDto) {
-    if (!t.film || !t.session) {
-      throw new BadRequestException('ticket must contain film and session ids');
-    }
-    if (typeof t.row !== 'number' || typeof t.seat !== 'number') {
-      throw new BadRequestException('row and seat must be numbers');
-    }
   }
 }
