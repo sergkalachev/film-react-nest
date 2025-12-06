@@ -18,13 +18,17 @@ const isMongo =
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, cache: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      cache: true,
+      envFilePath: process.env.NODE_ENV === 'production' ? undefined : '.env',
+    }),
 
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public', 'images'),
       serveRoot: '/content/afisha',
       serveStaticOptions: {
-        index: 'bg1s.jpg', // чтобы GET /content/afisha/ вернул картинку
+        index: 'bg1s.jpg',
       },
     }),
 
