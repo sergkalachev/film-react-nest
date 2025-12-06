@@ -1,0 +1,89 @@
+services:
+  database:
+    image: postgres:16.4
+    container_name: film-postgres
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+
+    ports:
+      - "5432:5432"
+
+    networks:
+      - internal
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin4_container
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - internal
+    depends_on:
+      - database
+
+  frontend:
+    image: ghcr.io/sergkalachev/sp14_16_frontend:latest
+    environment:
+      VITE_BASE_URL: /
+      VITE_API_URL: /api/afisha
+      VITE_CDN_URL: /content/afisha
+    volumes:
+      - frontend_build:/app/dist
+    networks:
+      - internal
+
+  backend:
+    image: ghcr.io/sergkalachev/sp14_16_backend:latest
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_DRIVER: postgres
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}
+      DATABASE_USERNAME: ${DB_USER}
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - database
+    networks:
+      - internal
+
+  server:
+    image: ghcr.io/sergkalachev/sp14_16_server:latest
+    ports:
+      - "80:80"
+    volumes:
+      - frontend_build:/var/www
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - internal
+
+volumes:
+  db_data:
+  pgadmin-data:
+  frontend_build:
+
+networks:
+  internal:

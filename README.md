@@ -1,5 +1,7 @@
 # FILM!
 
+Приложение выложено по адресу: http://skalachev-films.nomorepartiessbs.ru
+
 ## Установка
 
 ### MongoDB
